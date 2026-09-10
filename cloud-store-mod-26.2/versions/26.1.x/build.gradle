@@ -1,0 +1,64 @@
+plugins {
+    id 'java'
+}
+
+version = '1.0'
+group = 'com.cloudstore'
+
+sourceSets {
+    main {
+        java.srcDirs = ['../../src/main/java']
+        resources.srcDirs = ['../../src/main/resources']
+    }
+}
+
+dependencies {
+    def root = 'D:/PCL2/.minecraft/versions/26.1.2-Fabric 0.19.3'
+    compileOnly files('C:/Users/Tlipoca/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged-deobf/26.1.2/minecraft-merged-deobf-26.1.2.jar')
+    compileOnly files('D:/PCL2/.minecraft/libraries/net/fabricmc/fabric-loader/0.19.3/fabric-loader-0.19.3.jar')
+    compileOnly files("${root}/mods/fabric-api-0.155.2+26.1.2.jar")
+    compileOnly fileTree('local-libs') { include '*.jar' }
+    compileOnly fileTree("${root}/mods") { include '*litematica-fabric-26.1.2-0.27.10.jar' }
+    compileOnly fileTree("${root}/mods") { include 'malilib-fabric-26.1.2-0.28.9.jar' }
+    compileOnly fileTree('D:/PCL2/.minecraft/libraries') {
+        include '**/*.jar'
+        exclude 'net/minecraft/**', 'net/fabricmc/**', 'net/minecraftforge/**', 'net/neoforged/**', 'optifine/**', 'cpw/**'
+    }
+    implementation files('C:/Users/Tlipoca/.gradle/caches/modules-2/files-2.1/com.belerweb/pinyin4j/2.5.1/ea23babfc45a078af5b73cd9f3401caad1f1b2a9/pinyin4j-2.5.1.jar')
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand version: project.version
+        filter { line ->
+            line.replace('"minecraft": ">=26.2"', '"minecraft": ">=26.1 <26.2"')
+                .replace('"litematica": ">=0.28.4"', '"litematica": ">=0.27.10"')
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+    archiveFileName = 'cloud-store-26.1.x.jar'
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+tasks.register('collectRootJar', Copy) {
+    doNotTrackState('The destination is the shared workspace root.')
+    dependsOn jar
+    from jar.archiveFile
+    into 'D:/SSS'
+}

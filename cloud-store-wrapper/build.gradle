@@ -1,0 +1,84 @@
+import groovy.json.JsonBuilder
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'java'
+}
+
+version = '0.3.0'
+group = 'com.cloudstore'
+base {
+    archivesName = 'cloud-store-wrapper'
+}
+
+// 各版本的 mod jar（需先在对应子工程中构建）
+def modProjectDir = file('../cloud-store-mod-26.2')
+def subJars = [
+        file("${modProjectDir}/build/libs/cloud-store-26.2.jar"),
+        file("${modProjectDir}/versions/26.1.x/build/libs/cloud-store-26.1.x.jar"),
+        file("${modProjectDir}/versions/1.21.11/build/libs/cloud-store-1.21.11.jar"),
+]
+
+// 外层声明的 minecraft 版本区间 = 三个嵌套 jar 的 depends.minecraft 并集
+def minecraftDepends = ['>=26.2', '>=26.1 <26.2', '1.21.11']
+
+repositories {
+    mavenCentral()
+}
+
+tasks.register('collectSubMods') {
+    def destDir = layout.buildDirectory.dir('submods/META-INF/jars')
+
+    outputs.upToDateWhen { false }
+
+    doLast {
+        def dir = destDir.get().asFile
+        dir.deleteDir()
+        dir.mkdirs()
+        subJars.each { jarFile ->
+            if (!jarFile.exists()) {
+                throw new GradleException("Missing sub-mod jar: ${jarFile} (先构建对应版本子工程)")
+            }
+            java.nio.file.Files.copy(jarFile.toPath(), new File(dir, jarFile.name).toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            println "Copied: ${jarFile.name}"
+        }
+    }
+}
+
+processResources {
+    dependsOn collectSubMods
+
+    inputs.property 'minecraftDepends', minecraftDepends
+
+    filesMatching('fabric.mod.json') {
+        expand version: project.version
+    }
+
+    doLast {
+        def jarsDir = layout.buildDirectory.dir('submods/META-INF/jars').get().asFile
+        def jsonFile = layout.buildDirectory.file('resources/main/fabric.mod.json').get().asFile
+        def json = new JsonSlurper().parse(jsonFile)
+        json.jars = jarsDir.listFiles()
+                ?.findAll { it.name.endsWith('.jar') }
+                ?.collect { [file: "META-INF/jars/${it.name}"] }
+        (json.depends as Map).minecraft = minecraftDepends
+        jsonFile.text = JsonBuilder.newInstance(json).toPrettyString()
+        println "Nested jars: ${json.jars.size()}, minecraft: ${minecraftDepends}"
+    }
+}
+
+jar {
+    dependsOn processResources
+    archiveFileName = 'cloud-store-wrapper.jar'
+    from sourceSets.main.output
+    from(layout.buildDirectory.dir('submods'))
+}
+
+tasks.register('deploy', Copy) {
+    doNotTrackState('The destination is the workspace root deliverable.')
+    dependsOn jar
+    from jar.archiveFile
+    into 'D:/SSS'
+    rename { 'Cloud-Store.jar' }
+}

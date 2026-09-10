@@ -1,0 +1,82 @@
+plugins {
+    id 'java'
+}
+
+def target12111 = providers.gradleProperty('targetMinecraft').orNull == '1.21.11'
+
+version = target12111 ? '1.0' : project.mod_version
+group = project.maven_group
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    def petraRoot = target12111 ? 'D:/PCL2/.minecraft/versions/Petra-1' : 'D:/PCL2/.minecraft/versions/26.2-Fabric 0.19.3'
+    def minecraftJar = target12111 ? 'Petra-1.jar' : '26.2-Fabric 0.19.3.jar'
+    def fabricApiJar = target12111 ? 'fabric-api-0.141.6+1.21.11.jar' : 'fabric-api-0.157.0+26.2.jar'
+    def litematicaJar = target12111 ? '[投影] litematica-fabric-1.21.11-0.26.12.jar' : '[投影] litematica-fabric-26.2-0.28.4.jar'
+    def malilibJar = target12111 ? 'malilib-fabric-1.21.11-0.27.16.jar' : 'malilib-fabric-26.2-0.29.3.jar'
+    compileOnly files("${petraRoot}/${minecraftJar}")
+    compileOnly files('D:/PCL2/.minecraft/libraries/net/fabricmc/fabric-loader/0.19.3/fabric-loader-0.19.3.jar')
+    compileOnly files("${petraRoot}/mods/${fabricApiJar}")
+    compileOnly files("${petraRoot}/mods/${litematicaJar}")
+    compileOnly files("${petraRoot}/mods/${malilibJar}")
+    if (!target12111) compileOnly fileTree('D:/SSS/awa/fabric-api-jars') { include '*.jar' }
+    compileOnly files('D:/PCL2/.minecraft/libraries/net/fabricmc/sponge-mixin/0.17.3+mixin.0.8.7/sponge-mixin-0.17.3+mixin.0.8.7.jar')
+    compileOnly fileTree('D:/PCL2/.minecraft/libraries') {
+        include '**/*.jar'
+        exclude 'net/minecraft/**', 'net/fabricmc/**', 'net/minecraftforge/**', 'net/neoforged/**', 'optifine/**', 'cpw/**'
+    }
+
+    implementation files('C:/Users/Tlipoca/.gradle/caches/modules-2/files-2.1/com.belerweb/pinyin4j/2.5.1/ea23babfc45a078af5b73cd9f3401caad1f1b2a9/pinyin4j-2.5.1.jar')
+}
+
+def resourceProperties = [version: version]
+
+processResources {
+    inputs.properties resourceProperties
+    filesMatching('fabric.mod.json') {
+        expand resourceProperties
+        if (target12111) {
+            filter { line ->
+                line.replace('"minecraft": ">=26.2"', '"minecraft": "~1.21.11"')
+                    .replace('"java": ">=25"', '"java": ">=21"')
+                    .replace('"litematica": ">=0.28.4"', '"litematica": ">=0.26.12"')
+            }
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = target12111 ? 21 : 25
+    options.encoding = 'UTF-8'
+}
+
+java {
+    sourceCompatibility = target12111 ? JavaVersion.VERSION_21 : JavaVersion.VERSION_25
+    targetCompatibility = target12111 ? JavaVersion.VERSION_21 : JavaVersion.VERSION_25
+}
+
+jar {
+    archiveFileName = target12111 ? 'cloud-store-1.21.11.jar' : 'cloud-store-26.2.jar'
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+tasks.register('collectRootJar', Copy) {
+    doNotTrackState('The destination is the shared workspace root.')
+    dependsOn jar
+    from jar.archiveFile
+    into 'D:/SSS'
+}
+
+tasks.register('collect12111Jar', Copy) {
+    doNotTrackState('The destination is the shared workspace root.')
+    dependsOn jar
+    from jar.archiveFile
+    into 'D:/SSS'
+    onlyIf { target12111 }
+}

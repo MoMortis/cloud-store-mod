@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "cloudstore-wrapper",
+  "version": "${version}",
+  "name": "Cloud Store",
+  "description": "Cloud Store multi-version wrapper (26.2 / 26.1.x / 1.21.11).",
+  "authors": ["PetraSM", "Damomo1"],
+  "environment": "client",
+  "icon": "assets/cloudstore-wrapper/icon.png",
+  "entrypoints": {
+  },
+  "depends": {
+    "fabricloader": ">=0.19.0",
+    "cloudstore": "*",
+    "minecraft": "PLACEHOLDER_MC"
+  }
+}

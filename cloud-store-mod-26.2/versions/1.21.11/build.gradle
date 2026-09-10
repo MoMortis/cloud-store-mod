@@ -1,0 +1,101 @@
+buildscript {
+    dependencies {
+        def loomCache = 'D:/SSS/Cloud-Store/.gradle-cloud-store-1.21.11-loom-h/caches/9.4.0/transforms'
+        classpath files("${loomCache}/ad8a30bd43bdde78da3073c87966d553/transformed/original/fabric-loom-1.16.3.jar")
+        classpath files("${loomCache}/6289a194ce36d279139154260b962ad4/transformed/original/gson-2.10.1.jar")
+        classpath files("${loomCache}/04cee15955177ff57943b9950adb4aed/transformed/original/kotlin-metadata-jvm-2.0.21.jar")
+        classpath files("${loomCache}/22e37ba2bd23fdb01c8bbf1c60fbea41/transformed/original/kotlin-stdlib-2.0.21.jar")
+        classpath files("${loomCache}/964c5d8d449cbe04ae8b5603dca53e43/transformed/original/asm-9.7.1.jar")
+        classpath files("${loomCache}/f94f9dc4fccfeed093ed80f3753a187a/transformed/original/asm-commons-9.7.1.jar")
+        classpath files("${loomCache}/d7720d754a110fd1b3213a7880ed81ce/transformed/original/asm-tree-9.7.1.jar")
+        classpath files("${loomCache}/43bedc1190c537c57565bf36643e88de/transformed/original/asm-analysis-9.7.1.jar")
+        classpath files("${loomCache}/798f29cbe6ddb59da8808641d733d1d7/transformed/original/asm-util-9.7.1.jar")
+        classpath files("${loomCache}/7bb681167ae0d457ba9a44ee83a62a95/transformed/original/tiny-remapper-0.14.0.jar")
+        classpath files("${loomCache}/018772d86e88eb9bbac6ce03db9f6e77/transformed/original/mapping-io-0.8.0.jar")
+        classpath files("${loomCache}/63c464b8d32f72e5e9ae3e1374a495ca/transformed/original/stitch-0.6.2.jar")
+        classpath files("${loomCache}/1ff9ae395667a948efb810ff9ee4d2e0/transformed/original/fabric-loom-native-0.2.0.jar")
+        classpath files("${loomCache}/212596f9853f4682c5898424f8f5c39d/transformed/original/class-tweaker-0.3.0-beta.2.jar")
+    }
+}
+
+apply plugin: net.fabricmc.loom.LoomGradlePlugin
+
+version = '1.0'
+group = 'com.cloudstore'
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
+    maven { url = 'https://masa.dy.fi/maven/' }
+}
+
+loom {
+    mods {
+        cloudstore {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDirs = ['src-live/main/java']
+        java.exclude 'com/cloudstore/client/screen/ConfigScreen.java'
+        resources.srcDirs = ['src-live/main/resources']
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings "net.fabricmc:yarn:${yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${loader_version}"
+    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-api-4b5d3c0a-0.141.4+1.21.11.jar')
+    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-lifecycle-events-v1-4b5d3c0a-2.6.15+4ebb5c083e.jar')
+    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-key-binding-api-v1-4b5d3c0a-1.1.7+4fc5413f3e.jar')
+    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-api-base-4b5d3c0a-1.0.5+4ebb5c083e.jar')
+    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-networking-api-v1-4b5d3c0a-5.1.6+6b6d71a53e.jar')
+    compileOnly files('D:/SSS/Cloud-Store/cloud-store-mod-26.2/versions/1.21.11/.gradle/loom-cache/remapped_mods/remapped/unspecified/[投影] litematica-fabric-1.21.11-0.26.12-4b5d3c0a/02f8b23a38/[投影] litematica-fabric-1.21.11-0.26.12-4b5d3c0a-02f8b23a38.jar')
+    compileOnly files('D:/SSS/Cloud-Store/cloud-store-mod-26.2/versions/1.21.11/.gradle/loom-cache/remapped_mods/remapped/unspecified/malilib-fabric-1.21.11-0.27.16-4b5d3c0a/49d6d9ca27/malilib-fabric-1.21.11-0.27.16-4b5d3c0a-49d6d9ca27.jar')
+    implementation files('C:/Users/Tlipoca/.gradle/caches/modules-2/files-2.1/com.belerweb/pinyin4j/2.5.1/ea23babfc45a078af5b73cd9f3401caad1f1b2a9/pinyin4j-2.5.1.jar')
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand version: project.version
+        filter { line ->
+            if (line.contains('"authors"')) return '  "authors": ["PetraSM", "Damomo1"],'
+            if (line.contains('"contact"') || line.contains('"license"')) return ''
+            if (line.contains('"fabric-api"')) return '    "fabric-api": "*",\n    "litematica": ">=0.26.12"'
+            return line
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+    from {
+        configurations.runtimeClasspath.findAll { it.name.startsWith('pinyin4j-') }.collect { zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+remapJar {
+    archiveFileName = 'cloud-store-1.21.11.jar'
+}
+
+tasks.register('collectRootJar', Copy) {
+    doNotTrackState('The destination is the shared workspace root.')
+    dependsOn remapJar
+    from remapJar.archiveFile
+    into 'D:/SSS'
+}
