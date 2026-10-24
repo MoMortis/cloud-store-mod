@@ -44,8 +44,19 @@ final class SchematicImportBrowser extends GuiSchematicBrowserBase implements IS
     public void initGui() {
         super.initGui();
         int y = getScreenHeight() - 26;
-        addButton(new ButtonGeneric(12, y, 62, 20, "导入"), new ButtonListener(this, true));
-        addButton(new ButtonGeneric(getScreenWidth() - 62, y, 52, 20, "取消"), new ButtonListener(this, false));
+        int x = 12;
+        ButtonGeneric importAll = new ButtonGeneric(x, y, -1, 20, "导入");
+        addButton(importAll, new ButtonListener(this, 1));
+        x = importAll.getX() + importAll.getWidth() + 4;
+        ButtonGeneric importMissing = new ButtonGeneric(x, y, -1, 20, "仅导入缺失材料");
+        addButton(importMissing, new ButtonListener(this, 2));
+        x = importMissing.getX() + importMissing.getWidth() + 4;
+        ButtonGeneric importContainers = new ButtonGeneric(x, y, -1, 20, "仅导入容器中物品");
+        addButton(importContainers, new ButtonListener(this, 3));
+        x = importContainers.getX() + importContainers.getWidth() + 4;
+        ButtonGeneric importMissingContainers = new ButtonGeneric(x, y, -1, 20, "仅导入容器中且背包缺失物品");
+        addButton(importMissingContainers, new ButtonListener(this, 4));
+        addButton(new ButtonGeneric(getScreenWidth() - 12, y, -1, true, "取消"), new ButtonListener(this, 0));
     }
 
     @Override
@@ -67,24 +78,40 @@ final class SchematicImportBrowser extends GuiSchematicBrowserBase implements IS
         return null;
     }
 
-    private void importSelected() {
+    private void importSelected(boolean missingOnly) {
+        DirectoryEntry entry = getSelectedEntry();
+        if (entry == null) return;
+        cloudStore.importSchematic(entry.getFullPath(), missingOnly);
+        GuiBase.openGui(cloudStore);
+    }
+
+    private void importContainers(boolean missingOnly) {
+        DirectoryEntry entry = getSelectedEntry();
+        if (entry == null) return;
+        cloudStore.importSchematicContainers(entry.getFullPath(), missingOnly);
+        GuiBase.openGui(cloudStore);
+    }
+
+    private DirectoryEntry getSelectedEntry() {
         DirectoryEntry entry = getListWidget() == null ? null : getListWidget().getLastSelectedEntry();
         if (entry == null) {
             addMessage(Message.MessageType.ERROR, "请先选择一个原理图文件");
-            return;
         }
-        cloudStore.importSchematic(entry.getFullPath());
-        GuiBase.openGui(cloudStore);
+        return entry;
     }
 
     private void cancel() {
         GuiBase.openGui(cloudStore);
     }
 
-    private record ButtonListener(SchematicImportBrowser browser, boolean importFile) implements IButtonActionListener {
+    // mode: 0=取消，1=全部导入，2=仅导入缺失材料，3=仅导入容器中物品，4=仅导入容器中且背包缺失物品
+    private record ButtonListener(SchematicImportBrowser browser, int mode) implements IButtonActionListener {
         @Override
         public void actionPerformedWithButton(ButtonBase button, int mouseButton) {
-            if (importFile) browser.importSelected();
+            if (mode == 1) browser.importSelected(false);
+            else if (mode == 2) browser.importSelected(true);
+            else if (mode == 3) browser.importContainers(false);
+            else if (mode == 4) browser.importContainers(true);
             else browser.cancel();
         }
     }

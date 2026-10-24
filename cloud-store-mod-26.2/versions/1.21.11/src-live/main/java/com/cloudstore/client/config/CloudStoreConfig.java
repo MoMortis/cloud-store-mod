@@ -18,6 +18,7 @@ public final class CloudStoreConfig {
     public String apiBaseUrl = "https://tslmc.cc.cd";
     public String sessionCookie = "";
     public boolean showShulkerBoxes;
+    public java.util.List<String> favorites = new java.util.ArrayList<>();
 
     public static CloudStoreConfig load() {
         if (!Files.exists(PATH)) {
@@ -33,6 +34,7 @@ public final class CloudStoreConfig {
             }
             config.apiBaseUrl = normalizeUrl(config.apiBaseUrl);
             config.sessionCookie = config.sessionCookie == null ? "" : config.sessionCookie.trim();
+            if (config.favorites == null) config.favorites = new java.util.ArrayList<>();
             return config;
         } catch (Exception ignored) {
             return new CloudStoreConfig();

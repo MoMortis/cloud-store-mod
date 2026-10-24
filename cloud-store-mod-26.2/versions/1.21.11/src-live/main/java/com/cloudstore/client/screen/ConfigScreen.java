@@ -15,7 +15,7 @@ public final class ConfigScreen extends Screen {
     private TextFieldWidget tokenField;
     private ButtonWidget testButton;
     private String status = "";
-    private int statusColor = 0xB9C3D0;
+    private int statusColor = 0xFFB9C3D0;
     private int titleY;
     private int urlLabelY;
     private int tokenLabelY;
@@ -66,7 +66,7 @@ public final class ConfigScreen extends Screen {
     private void save() {
         saveValues();
         status = "已保存";
-        statusColor = 0x71D49A;
+        statusColor = 0xFF71D49A;
         if (this.client != null) {
             this.client.setScreen(parent);
         }
@@ -74,7 +74,7 @@ public final class ConfigScreen extends Screen {
 
     private void testConnection() {
         status = "正在测试连接...";
-        statusColor = 0xB9C3D0;
+        statusColor = 0xFFB9C3D0;
         testButton.setMessage(Text.literal("测试中..."));
         testButton.active = false;
         CloudStoreClient.showStatus(status);
@@ -103,7 +103,7 @@ public final class ConfigScreen extends Screen {
 
     private void finishTest(String message, boolean success) {
         status = message;
-        statusColor = success ? 0x71D49A : 0xF1B36B;
+        statusColor = success ? 0xFF71D49A : 0xFFF1B36B;
         if (testButton != null) {
             testButton.setMessage(Text.literal("保存并测试"));
             testButton.active = true;
@@ -137,9 +137,9 @@ public final class ConfigScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, this.width, this.height, 0xE9101116);
-        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, titleY, 0xFFFFFF);
-        context.drawTextWithShadow(this.textRenderer, Text.literal("服务地址（IP 或 URL）"), urlField.getX(), urlLabelY, 0xB9C3D0);
-        context.drawTextWithShadow(this.textRenderer, Text.literal("登录密码（游戏内设置的 Web 密码）"), tokenField.getX(), tokenLabelY, 0xB9C3D0);
+        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, titleY, 0xFFFFFFFF);
+        context.drawTextWithShadow(this.textRenderer, Text.literal("服务地址（IP 或 URL）"), urlField.getX(), urlLabelY, 0xFFB9C3D0);
+        context.drawTextWithShadow(this.textRenderer, Text.literal("登录密码（游戏内设置的 Web 密码）"), tokenField.getX(), tokenLabelY, 0xFFB9C3D0);
         if (!status.isEmpty()) {
             String displayStatus = this.textRenderer.trimToWidth(status, Math.max(80, this.width - 20));
             context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(displayStatus), this.width / 2, statusY, statusColor);

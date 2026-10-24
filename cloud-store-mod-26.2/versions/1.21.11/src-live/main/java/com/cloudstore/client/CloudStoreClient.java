@@ -18,8 +18,11 @@ import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class CloudStoreClient implements ClientModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("cloudstore");
@@ -29,6 +32,11 @@ public final class CloudStoreClient implements ClientModInitializer {
     private static KeyBinding openKey;
     private static boolean loginInProgress;
     private static long connectionId;
+    // 同一仓库的库存请求全局只保留一个，反复开关界面不会堆积
+    private static final Map<String, CompletableFuture<CloudStoreModels.InventoryResponse>> PENDING_INVENTORY = new ConcurrentHashMap<>();
+    // 每个仓库最近一次写入缓存的结果序号，迟到的旧响应不覆盖新数据
+    private static final Map<String, Long> CACHE_SEQUENCE = new ConcurrentHashMap<>();
+    private static final AtomicLong CACHE_SEQUENCE_SOURCE = new AtomicLong();
 
     @Override
     public void onInitializeClient() {
@@ -124,6 +132,47 @@ public final class CloudStoreClient implements ClientModInitializer {
         }));
     }
 
+    public static boolean hasPendingInventory(String ownerUuid) {
+        return ownerUuid != null && !ownerUuid.isBlank() && PENDING_INVENTORY.containsKey(cacheKey(ownerUuid));
+    }
+
+    public static CompletableFuture<CloudStoreModels.InventoryResponse> fetchInventory(String ownerUuid) {
+        String key = cacheKey(ownerUuid);
+        CompletableFuture<CloudStoreModels.InventoryResponse> pending = PENDING_INVENTORY.get(key);
+        if (pending != null) return pending;
+        long sequence = CACHE_SEQUENCE_SOURCE.incrementAndGet();
+        CompletableFuture<CloudStoreModels.InventoryResponse> future;
+        try {
+            future = api.inventory(ownerUuid);
+        } catch (RuntimeException error) {
+            return CompletableFuture.failedFuture(error);
+        }
+        pending = PENDING_INVENTORY.putIfAbsent(key, future);
+        if (pending != null) return pending;
+        future.whenComplete((response, error) -> {
+            PENDING_INVENTORY.remove(key, future);
+            if (error == null && response != null) storeInventory(key, sequence, response);
+        });
+        return future;
+    }
+
+    private static String cacheKey(String ownerUuid) {
+        return config.apiBaseUrl + '\u0000' + ownerUuid;
+    }
+
+    // 只有序号更大的结果才写缓存，迟到的旧响应当丢弃
+    private static void storeInventory(String key, long sequence, CloudStoreModels.InventoryResponse response) {
+        boolean[] newest = {false};
+        CACHE_SEQUENCE.compute(key, (ignored, previous) -> {
+            if (previous != null && previous >= sequence) return previous;
+            newest[0] = true;
+            return sequence;
+        });
+        if (!newest[0]) return;
+        int split = key.indexOf('\u0000');
+        cache.putInventory(key.substring(0, split), key.substring(split + 1), response);
+    }
+
     private static void loadServerInventory(long loginConnectionId, CloudStoreModels.MeResponse me) {
         cache.putMe(config.apiBaseUrl, me);
         String ownerUuid = me.defaultOwnerUuid;
@@ -133,10 +182,7 @@ public final class CloudStoreClient implements ClientModInitializer {
         if ((ownerUuid == null || ownerUuid.isBlank()) && me.user != null) ownerUuid = me.user.uuid;
         if (ownerUuid == null || ownerUuid.isBlank()) return;
         String requestedOwner = ownerUuid;
-        api.inventory(requestedOwner).whenComplete((inventory, error) -> {
-            if (loginConnectionId != connectionId || error != null) return;
-            cache.putInventory(config.apiBaseUrl, requestedOwner, inventory);
-        });
+        fetchInventory(requestedOwner);
     }
 
     public static void showStatus(String message) {

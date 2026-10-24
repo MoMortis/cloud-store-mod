@@ -14,9 +14,9 @@ repositories {
 dependencies {
     def petraRoot = target12111 ? 'D:/PCL2/.minecraft/versions/Petra-1' : 'D:/PCL2/.minecraft/versions/26.2-Fabric 0.19.3'
     def minecraftJar = target12111 ? 'Petra-1.jar' : '26.2-Fabric 0.19.3.jar'
-    def fabricApiJar = target12111 ? 'fabric-api-0.141.6+1.21.11.jar' : 'fabric-api-0.157.0+26.2.jar'
-    def litematicaJar = target12111 ? '[投影] litematica-fabric-1.21.11-0.26.12.jar' : '[投影] litematica-fabric-26.2-0.28.4.jar'
-    def malilibJar = target12111 ? 'malilib-fabric-1.21.11-0.27.16.jar' : 'malilib-fabric-26.2-0.29.3.jar'
+    def fabricApiJar = target12111 ? 'fabric-api-0.141.6+1.21.11.jar' : 'fabric-api-0.161.0+26.2.jar'
+    def litematicaJar = target12111 ? '[投影] litematica-fabric-1.21.11-0.26.12.jar' : '[投影] litematica-fabric-26.2-0.28.8.jar'
+    def malilibJar = target12111 ? 'malilib-fabric-1.21.11-0.27.16.jar' : 'malilib-fabric-26.2-0.29.6.jar'
     compileOnly files("${petraRoot}/${minecraftJar}")
     compileOnly files('D:/PCL2/.minecraft/libraries/net/fabricmc/fabric-loader/0.19.3/fabric-loader-0.19.3.jar')
     compileOnly files("${petraRoot}/mods/${fabricApiJar}")

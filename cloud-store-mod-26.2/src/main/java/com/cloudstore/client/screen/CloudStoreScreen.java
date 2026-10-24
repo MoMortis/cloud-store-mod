@@ -12,7 +12,10 @@ import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
@@ -22,6 +25,8 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.Fireworks;
+import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.LiquidBlock;
 import org.lwjgl.glfw.GLFW;
 
@@ -33,12 +38,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.ArrayList;
 
 public final class CloudStoreScreen extends Screen {
     private static final int TILE_SIZE = 34;
     private static final int TILE_STEP = 34;
     private static final float ITEM_SCALE = 1.25f;
+    private static final float HOVER_ITEM_SCALE = 2.0f;
     private static final int TAB_SIZE = 24;
     private static final int TAB_STEP = 26;
 
@@ -54,6 +59,9 @@ public final class CloudStoreScreen extends Screen {
     private int ownerIndex;
     private int selectedCategory;
     private int scroll;
+    private float scrollAnim;
+    // 每个物品的悬停缩放动画值（itemKey → 当前缩放）
+    private final java.util.Map<String, Float> hoverScales = new java.util.HashMap<>();
     private int gridY;
     private int gridBottom;
     private int tabY = 55;
@@ -62,7 +70,13 @@ public final class CloudStoreScreen extends Screen {
     private boolean submitting;
     private String status = "";
     private int statusColor = 0xF1B36B;
-    private long refreshStartedAt;
+    // 原理图导入后仓库无法满足的物品明细，鼠标悬停状态栏时展开显示
+    private List<Component> importIssueTooltip = List.of();
+    private String importIssueStatus = "";
+    // 在飞的库存刷新请求数 / 请求序号，序号用于丢弃迟到的旧响应
+    private int inventoryInFlight;
+    private long inventoryRequestSeq;
+    private long appliedInventorySeq;
     private String savedSearch = "";
     private String savedTarget = "";
     private List<String> targetSuggestions = List.of();
@@ -270,7 +284,12 @@ public final class CloudStoreScreen extends Screen {
 
     public void reload() {
         CloudStoreClient.showStatus("尝试刷新");
-        loadInventoryOnly(true);
+        // 还没解析出仓库时单纯拉库存会被空 owner 挡掉，改走完整重连
+        if (ownerUuid.isBlank()) {
+            load();
+            return;
+        }
+        loadInventoryOnly(true, true);
     }
 
     private String endpoint() {
@@ -286,18 +305,24 @@ public final class CloudStoreScreen extends Screen {
         me = cachedMe;
         ownerUuid = resolveOwner(cachedMe, ownerUuid);
         CloudStoreModels.InventoryResponse cachedInventory = CloudStoreClient.cache.inventory(endpoint(), ownerUuid);
-        if (cachedInventory == null) {
-            loadInventoryOnly();
+        // 没有缓存或连仓库都没解析出来时走完整加载，别在空 owner 上原地卡住
+        if (cachedInventory == null || ownerUuid.isBlank()) {
+            load();
             return;
         }
         applyInventory(cachedInventory);
         status = "已显示缓存，关闭界面时自动刷新";
         updateButtons();
+        // 上次关闭界面发出的刷新如果还没回来，挂上去等结果；不会额外发请求
+        if (CloudStoreClient.hasPendingInventory(ownerUuid)) {
+            loadInventoryOnly(false, true);
+        }
     }
 
     private void load() {
         if (busy) return;
         busy = true;
+        long requestSeq = ++inventoryRequestSeq;
         if (items.isEmpty()) status = "正在连接云仓库...";
         else status = "正在后台刷新...";
         updateButtons();
@@ -305,7 +330,7 @@ public final class CloudStoreScreen extends Screen {
         CloudStoreClient.api.connect().thenCompose(response -> {
             CloudStoreClient.cache.putMe(endpoint(), response);
             String resolvedOwner = resolveOwner(response, preferredOwner);
-            return CloudStoreClient.api.inventory(resolvedOwner)
+            return CloudStoreClient.fetchInventory(resolvedOwner)
                 .thenApply(inventory -> new LoadResult(response, resolvedOwner, inventory));
         }).whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
             busy = false;
@@ -315,11 +340,20 @@ public final class CloudStoreScreen extends Screen {
                 return;
             }
             me = result.me;
-            ownerUuid = result.ownerUuid;
-            CloudStoreClient.cache.putInventory(endpoint(), ownerUuid, result.inventory);
-            applyInventory(result.inventory);
-            status = "";
-            updateButtons();
+            // 以用户此刻选中的仓库为准，避免把中途切换的选择改回去
+            ownerUuid = resolveOwner(result.me, ownerUuid);
+            if (ownerUuid.equals(result.ownerUuid)) {
+                if (requestSeq > appliedInventorySeq) {
+                    appliedInventorySeq = requestSeq;
+                    applyInventory(result.inventory);
+                }
+                status = "";
+                updateButtons();
+            } else {
+                // 加载期间切了仓库，重新拉当前这个
+                updateButtons();
+                loadInventoryOnly(false, true);
+            }
         }));
     }
 
@@ -356,7 +390,8 @@ public final class CloudStoreScreen extends Screen {
         CloudStoreModels.InventoryResponse cached = CloudStoreClient.cache.inventory(endpoint(), ownerUuid);
         if (cached != null) applyInventory(cached);
         else items.clear();
-        loadInventoryOnly();
+        // 切换仓库必须真的拉一次，不能被在飞的刷新挡掉
+        loadInventoryOnly(false, true);
     }
 
     private void loadInventoryOnly() {
@@ -368,27 +403,34 @@ public final class CloudStoreScreen extends Screen {
     }
 
     private void loadInventoryOnly(boolean showRefreshComplete, boolean force) {
-        if ((busy && !force) || ownerUuid.isBlank()) return;
-        busy = true;
-        refreshStartedAt = showRefreshComplete ? System.nanoTime() : 0L;
+        if (ownerUuid.isBlank()) return;
+        if (!force && inventoryInFlight > 0) return;
+        long startedAt = showRefreshComplete ? System.nanoTime() : 0L;
+        long requestSeq = ++inventoryRequestSeq;
+        inventoryInFlight++;
         status = items.isEmpty() ? "正在读取库存..." : "已显示缓存，正在后台刷新...";
         statusColor = 0xF1B36B;
         updateButtons();
         String requestedOwner = ownerUuid;
-        CloudStoreClient.api.inventory(requestedOwner).whenComplete((response, error) -> {
-            if (error == null) CloudStoreClient.cache.putInventory(endpoint(), requestedOwner, response);
+        CloudStoreClient.fetchInventory(requestedOwner).whenComplete((response, error) -> {
             Minecraft.getInstance().execute(() -> {
-                busy = false;
-                if (error != null) {
-                    status = message(error);
-                    statusColor = 0xF1B36B;
-                }
-                else if (requestedOwner.equals(ownerUuid)) {
-                    applyInventory(response);
-                    status = "";
-                    statusColor = 0xFF00FF00;
-                    if (showRefreshComplete) {
-                        CloudStoreClient.showStatus("刷新完成（%.2f 秒）".formatted((System.nanoTime() - refreshStartedAt) / 1_000_000_000.0d));
+                inventoryInFlight = Math.max(0, inventoryInFlight - 1);
+                // 只认比已应用响应更新的结果，防止迟到的旧数据盖掉新数据
+                if (requestSeq > appliedInventorySeq) {
+                    if (error != null) {
+                        // 还有更新的请求在飞时，旧请求的错误不往界面上报
+                        if (requestSeq == inventoryRequestSeq) {
+                            status = message(error);
+                            statusColor = 0xF1B36B;
+                        }
+                    } else if (requestedOwner.equals(ownerUuid)) {
+                        appliedInventorySeq = requestSeq;
+                        applyInventory(response);
+                        status = "";
+                        statusColor = 0xFF00FF00;
+                        if (showRefreshComplete) {
+                            CloudStoreClient.showStatus("刷新完成（%.2f 秒）".formatted((System.nanoTime() - startedAt) / 1_000_000_000.0d));
+                        }
                     }
                 }
                 updateButtons();
@@ -507,7 +549,7 @@ public final class CloudStoreScreen extends Screen {
         new SchematicImportBrowser(this).open();
     }
 
-    void importSchematic(java.nio.file.Path file) {
+    void importSchematic(java.nio.file.Path file, boolean missingOnly) {
         try {
             fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = SchematicImportBrowser.load(file);
             if (schematic == null) {
@@ -517,6 +559,8 @@ public final class CloudStoreScreen extends Screen {
 
             Map<String, CloudStoreModels.Item> available = new HashMap<>();
             for (CloudStoreModels.Item item : items) available.put(item.itemId, item);
+            // 仅导入缺失时：统计本地背包（含盔甲、副手、潜影盒内）已有的物品数量
+            Map<String, Long> owned = missingOnly ? countLocalPlayerItems() : Map.of();
 
             Map<String, Long> required = new LinkedHashMap<>();
             int skipped = 0;
@@ -530,37 +574,148 @@ public final class CloudStoreScreen extends Screen {
                 Identifier id = BuiltInRegistries.ITEM.getKey(stack.getItem());
                 if (id != null) required.merge(id.toString(), (long) entry.getCountTotal(), Long::sum);
             }
-
-            selected.clear();
-            selectedSources.clear();
-            long imported = 0;
-            int importedTypes = 0;
-            int insufficientTypes = 0;
-            int unmatchedTypes = 0;
-            for (Map.Entry<String, Long> requirement : required.entrySet()) {
-                CloudStoreModels.Item item = available.get(requirement.getKey());
-                if (item == null || item.amount <= 0) {
-                    unmatchedTypes++;
-                    continue;
-                }
-                long amount = Math.min(requirement.getValue(), item.amount);
-                if (amount < requirement.getValue()) insufficientTypes++;
-                if (amount > 0) {
-                    selected.put(item.itemKey, amount);
-                    selectedSources.put(item.itemKey, List.of(
-                        new SourceSelection(item.itemKey, item.displayName, false, 0, amount)));
-                    imported += amount;
-                    importedTypes++;
-                }
-            }
-            status = "已导入 " + importedTypes + " 种材料，共 " + imported + " 件；"
-                + insufficientTypes + " 种库存不足；" + unmatchedTypes + " 种无法匹配"
-                + (skipped > 0 ? "；已跳过 " + skipped + " 项" : "");
+            applyRequirements(required, available, owned, missingOnly, skipped);
         } catch (RuntimeException error) {
             CloudStoreClient.LOGGER.warn("Unable to import schematic {}", file, error);
             status = "原理图导入失败：" + message(error);
         }
         updateButtons();
+    }
+
+    // 仅导入容器中物品：统计原理图里容器方块实体（Items 列表）内装的物品作为需求，不含盒子本身和其他方块
+    // missingOnly 时扣除本地背包（含盔甲、副手、潜影盒内）已有的数量
+    void importSchematicContainers(java.nio.file.Path file, boolean missingOnly) {
+        try {
+            fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = SchematicImportBrowser.load(file);
+            if (schematic == null) {
+                status = "无法读取原理图：" + file.getFileName();
+                return;
+            }
+            Map<String, CloudStoreModels.Item> available = new HashMap<>();
+            for (CloudStoreModels.Item item : items) available.put(item.itemId, item);
+            Map<String, Long> owned = missingOnly ? countLocalPlayerItems() : Map.of();
+            Map<String, Long> required = new LinkedHashMap<>();
+            for (String region : schematic.getAreas().keySet()) {
+                var blockEntities = schematic.getBlockEntityMapForRegion(region);
+                if (blockEntities == null) continue;
+                for (Object blockEntity : blockEntities.values()) {
+                    collectContainerItems(blockEntity, required);
+                }
+            }
+            if (required.isEmpty()) {
+                status = "原理图中没有容器物品";
+                return;
+            }
+            applyRequirements(required, available, owned, missingOnly, 0);
+        } catch (RuntimeException error) {
+            CloudStoreClient.LOGGER.warn("Unable to import schematic {}", file, error);
+            status = "原理图导入失败：" + message(error);
+        }
+        updateButtons();
+    }
+
+    // 需求匹配共用逻辑：匹配仓库库存，按 min(需求数, 库存) 填入 selected/selectedSources 并生成状态栏文本
+    private void applyRequirements(Map<String, Long> required, Map<String, CloudStoreModels.Item> available,
+                                   Map<String, Long> owned, boolean missingOnly, int skipped) {
+        selected.clear();
+        selectedSources.clear();
+        long imported = 0;
+        int importedTypes = 0;
+        int insufficientTypes = 0;
+        int unmatchedTypes = 0;
+        List<Component> issues = new ArrayList<>();
+        for (Map.Entry<String, Long> requirement : required.entrySet()) {
+            long need = requirement.getValue();
+            if (missingOnly) {
+                need -= owned.getOrDefault(requirement.getKey(), 0L);
+                if (need <= 0) continue; // 背包已满足，无需从仓库取
+            }
+            CloudStoreModels.Item item = available.get(requirement.getKey());
+            if (item == null || item.amount <= 0) {
+                unmatchedTypes++;
+                issues.add(Component.literal("§c仓库没有：" + itemDisplayName(requirement.getKey()) + "（需 " + need + "）"));
+                continue;
+            }
+            long amount = Math.min(need, item.amount);
+            if (amount < need) {
+                insufficientTypes++;
+                issues.add(Component.literal("§6库存不足：" + item.displayName + "（需 " + need + "，仓库仅 " + item.amount + "）"));
+            }
+            if (amount > 0) {
+                selected.put(item.itemKey, amount);
+                selectedSources.put(item.itemKey, List.of(
+                    new SourceSelection(item.itemKey, item.displayName, false, 0, amount)));
+                imported += amount;
+                importedTypes++;
+            }
+        }
+        status = "已导入 " + importedTypes + " 种材料，共 " + imported + " 件；"
+            + insufficientTypes + " 种库存不足；" + unmatchedTypes + " 种无法匹配"
+            + (skipped > 0 ? "；已跳过 " + skipped + " 项" : "");
+        if (!issues.isEmpty()) {
+            issues.add(0, Component.literal("§e以下物品仓库无法满足："));
+            importIssueTooltip = issues;
+        } else {
+            importIssueTooltip = List.of();
+        }
+        importIssueStatus = status;
+    }
+
+    // 注册 ID 解析为本地化物品名，用于缺失明细展示；解析失败时原样返回 ID
+    private String itemDisplayName(String id) {
+        ItemStack stack = itemStack(id);
+        return stack.isEmpty() ? id : stack.getHoverName().getString();
+    }
+
+    // 容器方块实体 NBT 的 Items 列表内物品计入需求（潜影盒、箱子、木桶、漏斗、发射器等）
+    // 兼容两种方块实体数据类型：litematica 0.28.8（26.2）返回 malilib CompoundData，0.27.10（26.1.2）返回原版 CompoundTag
+    private void collectContainerItems(Object blockEntity, Map<String, Long> required) {
+        if (blockEntity instanceof fi.dy.masa.malilib.util.data.tag.CompoundData data) {
+            fi.dy.masa.malilib.util.data.tag.ListData list = data.getListOrDefault("Items", 9, new fi.dy.masa.malilib.util.data.tag.ListData());
+            for (int i = 0; i < list.size(); i++) {
+                if (!(list.get(i) instanceof fi.dy.masa.malilib.util.data.tag.CompoundData entry)) continue;
+                String id = entry.getStringOrDefault("id", "");
+                if (id.isEmpty()) continue;
+                int count = entry.getIntOrDefault("count", entry.getIntOrDefault("Count", 0));
+                if (count > 0) required.merge(id, (long) count, Long::sum);
+            }
+        } else if (blockEntity instanceof CompoundTag tag) {
+            for (Tag entryTag : tag.getListOrEmpty("Items")) {
+                if (!(entryTag instanceof CompoundTag entry)) continue;
+                String id = entry.getStringOr("id", "");
+                if (id.isEmpty()) continue;
+                int count = entry.getIntOr("count", 0);
+                if (count == 0) count = entry.getIntOr("Count", 0);
+                if (count > 0) required.merge(id, (long) count, Long::sum);
+            }
+        }
+    }
+
+    // 统计本地玩家背包（含盔甲、副手、潜影盒内）各物品的数量，key 为物品注册 ID
+    private Map<String, Long> countLocalPlayerItems() {
+        Map<String, Long> counts = new HashMap<>();
+        var player = Minecraft.getInstance().player;
+        if (player == null) return counts;
+        var inv = player.getInventory();
+        List<ItemStack> stacks = new ArrayList<>();
+        for (int i = 0; i < inv.getContainerSize(); i++) stacks.add(inv.getItem(i));
+        collectItemCounts(stacks, counts);
+        return counts;
+    }
+
+    private void collectItemCounts(List<ItemStack> stacks, Map<String, Long> counts) {
+        for (ItemStack stack : stacks) {
+            if (stack == null || stack.isEmpty()) continue;
+            Identifier id = BuiltInRegistries.ITEM.getKey(stack.getItem());
+            if (id == null) continue;
+            counts.merge(id.toString(), (long) stack.getCount(), Long::sum);
+            ItemContainerContents container = stack.get(DataComponents.CONTAINER);
+            if (container != null) {
+                List<ItemStack> inner = new ArrayList<>();
+                container.nonEmptyItemCopyStream().forEach(inner::add);
+                collectItemCounts(inner, counts);
+            }
+        }
     }
 
     private boolean skipSchematicStack(ItemStack stack) {
@@ -613,7 +768,7 @@ public final class CloudStoreScreen extends Screen {
 
     private void rebuildCategories() {
         categories.clear();
-        categories.add(new Category(Component.literal("全部"), new ItemStack(Items.CHEST), Set.of(), true));
+        categories.add(new Category(Component.literal("全部"), new ItemStack(Items.CHEST), Set.of(), true, false));
         try {
             if (this.minecraft != null && this.minecraft.level != null && this.minecraft.getConnection() != null) {
                 CreativeModeTabs.tryRebuildTabContents(
@@ -624,9 +779,17 @@ public final class CloudStoreScreen extends Screen {
             }
             for (CreativeModeTab group : CreativeModeTabs.tabs()) {
                 try {
+                    CreativeModeTab.Type type = group.getType();
+                    if (type == CreativeModeTab.Type.HOTBAR) continue; // 删除"已保存快捷栏"
+                    if (type == CreativeModeTab.Type.SEARCH) continue; // 删除"搜索物品"目录（与"全部"重复）
+                    if (type == CreativeModeTab.Type.INVENTORY) {
+                        // "生存模式物品栏"改为收藏目录（图标不变）
+                        categories.add(new Category(Component.literal("收藏"), group.getIconItem(), Set.of(), false, true));
+                        continue;
+                    }
                     Set<Item> members = new HashSet<>();
                     for (ItemStack stack : group.getDisplayItems()) members.add(stack.getItem());
-                    categories.add(new Category(group.getDisplayName(), group.getIconItem(), members, false));
+                    categories.add(new Category(group.getDisplayName(), group.getIconItem(), members, false, false));
                 } catch (RuntimeException error) {
                     CloudStoreClient.LOGGER.warn("Unable to build creative category {}: {}", group.getDisplayName().getString(), error.getMessage());
                 }
@@ -648,7 +811,7 @@ public final class CloudStoreScreen extends Screen {
             else {
                 status = response.message;
                 CloudStoreClient.showStatus(response.message);
-                loadInventoryOnly();
+                loadInventoryOnly(false, true);
             }
             updateButtons();
         }));
@@ -756,7 +919,8 @@ public final class CloudStoreScreen extends Screen {
                 selectedSources.clear();
                 status = response.message;
                 CloudStoreClient.showStatus(response.message);
-                loadInventoryOnly();
+                // 取货后强制刷新，别被在飞的刷新挡掉
+                loadInventoryOnly(false, true);
             }
             updateButtons();
         }));
@@ -776,7 +940,7 @@ public final class CloudStoreScreen extends Screen {
             ownerButton.setMessage(Component.literal(label));
             ownerButton.active = me != null && me.owners != null && me.owners.size() > 1 && !submitting;
         }
-        if (refreshButton != null) refreshButton.active = !busy && !submitting;
+        if (refreshButton != null) refreshButton.active = !busy && inventoryInFlight == 0 && !submitting;
         if (depositButton != null) depositButton.active = !ownerUuid.isBlank() && !submitting;
         if (schematicButton != null) schematicButton.active = !submitting && !items.isEmpty();
         if (loginButton != null) loginButton.active = !busy && !submitting;
@@ -793,7 +957,10 @@ public final class CloudStoreScreen extends Screen {
         Category category = categories.isEmpty() ? null : categories.get(Math.min(selectedCategory, categories.size() - 1));
         return items.stream()
             .filter(item -> normalized.isEmpty() || matchesSearch(item, normalized))
-            .filter(item -> category == null || category.all || category.members.contains(itemStack(item.itemId).getItem()))
+            .filter(item -> category == null || category.all
+                || (category.favorites
+                    ? CloudStoreClient.config.favorites.contains(item.itemKey)
+                    : category.members.contains(itemStack(item.itemId).getItem())))
             .toList();
     }
 
@@ -829,12 +996,23 @@ public final class CloudStoreScreen extends Screen {
         int rows = Math.max(1, (gridBottom - gridY) / TILE_STEP);
         int maxScroll = Math.max(0, (int) Math.ceil((double) visible.size() / columns) - rows);
         scroll = Math.min(scroll, maxScroll);
-        int start = scroll * columns;
+        // 平滑滚动：视觉位置逐帧逼近目标行（参考 Smooth Scrolling）
+        scrollAnim += (scroll - scrollAnim) * Math.min(1.0f, Math.max(0.0f, delta) * 0.45f);
+        if (Math.abs(scroll - scrollAnim) < 0.002f) scrollAnim = scroll;
+        if (scrollAnim < 0) scrollAnim = 0;
+        if (scrollAnim > maxScroll) scrollAnim = maxScroll;
+        int animBaseRow = (int) Math.floor(scrollAnim);
+        float animFrac = scrollAnim - animBaseRow;
+        int rowOffset = Math.round(-animFrac * TILE_STEP);
+        int start = animBaseRow * columns;
         int x0 = Math.max(10, (this.width - columns * TILE_STEP) / 2);
-        for (int i = 0; i < rows * columns && start + i < visible.size(); i++) {
+        context.enableScissor(Math.max(0, x0 - 4), Math.max(0, gridY - 4),
+            Math.min(this.width, x0 + columns * TILE_STEP + 4), Math.min(this.height, gridBottom + 4));
+        for (int i = 0; i < (rows + 1) * columns && start + i < visible.size(); i++) {
             CloudStoreModels.Item item = visible.get(start + i);
             int x = x0 + (i % columns) * TILE_STEP;
-            int y = gridY + (i / columns) * TILE_STEP;
+            int y = gridY + (i / columns) * TILE_STEP + rowOffset;
+            if (y + TILE_SIZE <= gridY || y >= gridBottom) continue;
             boolean hovered = mouseX >= x && mouseX < x + TILE_SIZE && mouseY >= y && mouseY < y + TILE_SIZE;
             long selectedAmount = selected.getOrDefault(item.itemKey, 0L);
             int background = selectedAmount > 0 ? 0xFF315C49 : hovered ? 0xFF354252 : 0xFF242A33;
@@ -847,10 +1025,16 @@ public final class CloudStoreScreen extends Screen {
             }
             ItemStack stack = itemStack(item);
             if (!stack.isEmpty()) {
+                // 悬停缩放平滑过渡：当前值逐帧逼近目标值
+                float targetScale = hovered ? HOVER_ITEM_SCALE : ITEM_SCALE;
+                float scale = hoverScales.getOrDefault(item.itemKey, ITEM_SCALE);
+                scale += (targetScale - scale) * Math.min(1.0f, Math.max(0.0f, delta) * 12.0f);
+                if (Math.abs(scale - targetScale) < 0.01f) scale = targetScale;
+                hoverScales.put(item.itemKey, scale);
                 var matrices = context.pose();
                 matrices.pushMatrix();
                 matrices.translate(x + TILE_SIZE / 2.0f, y + TILE_SIZE / 2.0f);
-                matrices.scale(ITEM_SCALE, ITEM_SCALE);
+                matrices.scale(scale, scale);
                 matrices.translate(-8.0f, -8.0f);
                 context.item(stack, 0, 0);
                 matrices.popMatrix();
@@ -865,6 +1049,7 @@ public final class CloudStoreScreen extends Screen {
                 tooltip = Component.literal(item.displayName + "  可取 " + item.amount + availabilitySuffix(item));
             }
         }
+        context.disableScissor();
 
         if (visible.isEmpty() && status.isEmpty()) {
             context.centeredText(this.font, Component.literal("此分类没有匹配物品"), this.width / 2, (gridY + gridBottom) / 2, 0xAAB4C0);
@@ -881,14 +1066,27 @@ public final class CloudStoreScreen extends Screen {
             context.text(this.font, this.font.plainSubstrByWidth(summary, maxSummaryWidth), summaryX, bottomY + 6, 0xD4D9E0, true);
         }
         String displayStatus = !status.isEmpty() ? status : activeStatus();
+        List<Component> statusTooltip = null;
         if (!displayStatus.isEmpty()) {
             displayStatus = this.font.plainSubstrByWidth(displayStatus, Math.max(80, this.width - 20));
             context.centeredText(this.font, Component.literal(displayStatus), this.width / 2, gridY - 11, statusColor);
+            // 状态栏为原理图导入结果且存在仓库缺失时，悬停展开缺失明细
+            if (!importIssueTooltip.isEmpty() && status.equals(importIssueStatus)) {
+                int statusWidth = this.font.width(displayStatus);
+                if (mouseX >= this.width / 2 - statusWidth / 2 && mouseX < this.width / 2 + statusWidth / 2
+                    && mouseY >= gridY - 13 && mouseY < gridY - 1) {
+                    statusTooltip = importIssueTooltip;
+                }
+            }
         }
 
         super.extractRenderState(context, mouseX, mouseY, delta);
         renderTargetSuggestions(context, mouseX, mouseY);
-        if (tooltip != null) context.setTooltipForNextFrame(this.font, tooltip, mouseX, mouseY);
+        if (statusTooltip != null) {
+            context.setTooltipForNextFrame(this.font, statusTooltip, java.util.Optional.empty(), mouseX, mouseY);
+        } else if (tooltip != null) {
+            context.setTooltipForNextFrame(this.font, tooltip, mouseX, mouseY);
+        }
     }
 
     private String availabilitySuffix(CloudStoreModels.Item item) {
@@ -905,7 +1103,8 @@ public final class CloudStoreScreen extends Screen {
         return "";
     }
 
-    record BoxGroup(String label, String itemId, int boxCount, long perBoxAmount, List<CloudStoreModels.Item> contents) {
+    // sourceKey = 库存行原始 itemKey（服务端登记的 key），整盒取货请求必须用它而不是盒子的 itemId
+    record BoxGroup(String label, String itemId, String sourceKey, int boxCount, long perBoxAmount, List<CloudStoreModels.Item> contents) {
     }
 
     record SourceSelection(String sourceKey, String label, boolean box, long perBox, long amount) {
@@ -949,11 +1148,12 @@ public final class CloudStoreScreen extends Screen {
             if (!matched) continue;
             int add = (int) Math.min(Integer.MAX_VALUE, Math.max(1, row.amount));
             String key = row.itemId + "|" + signature;
+            String sourceKey = variantKey(row);
             BoxGroup existing = groups.get(key);
             String label = safe(row.displayName).isBlank() ? "潜影盒" : row.displayName;
             groups.put(key, existing == null
-                ? new BoxGroup(label, row.itemId, add, perBox, row.shulkerContents)
-                : new BoxGroup(existing.label, existing.itemId, existing.boxCount + add, perBox, existing.contents));
+                ? new BoxGroup(label, row.itemId, sourceKey, add, perBox, row.shulkerContents)
+                : new BoxGroup(existing.label, existing.itemId, existing.sourceKey, existing.boxCount + add, perBox, existing.contents));
         }
         return List.copyOf(groups.values());
     }
@@ -998,11 +1198,15 @@ public final class CloudStoreScreen extends Screen {
                 int x0 = Math.max(10, (this.width - columns * TILE_STEP) / 2);
                 if (mouseX >= x0) {
                     int localX = (int) (mouseX - x0);
-                    int localY = (int) (mouseY - gridY);
+                    // 与绘制一致：使用平滑滚动的视觉位置做命中判定
+                    int animBaseRow = (int) Math.floor(scrollAnim);
+                    int rowOffset = Math.round(-(scrollAnim - animBaseRow) * TILE_STEP);
+                    int relY = (int) (mouseY - gridY) - rowOffset;
+                    int row = relY / TILE_STEP;
+                    int localY = relY % TILE_STEP;
                     int column = localX / TILE_STEP;
-                    int row = localY / TILE_STEP;
-                    int index = scroll * columns + row * columns + column;
-                    if (localX % TILE_STEP < TILE_SIZE && localY % TILE_STEP < TILE_SIZE && index >= 0 && index < visible.size()) {
+                    int index = animBaseRow * columns + row * columns + column;
+                    if (localX % TILE_STEP < TILE_SIZE && localY < TILE_SIZE && index >= 0 && index < visible.size()) {
                         CloudStoreModels.Item item = visible.get(index);
                         CloudStoreClient.setScreen(this.minecraft, new WithdrawScreen(this, item, selected.getOrDefault(item.itemKey, 0L)));
                         return true;
@@ -1049,20 +1253,29 @@ public final class CloudStoreScreen extends Screen {
         }
     }
 
-    private ItemStack itemStack(CloudStoreModels.Item item) {
+    // 供子界面复用：带变体数据（如烟花等级）的图标
+    // 注意：不能用反射设置组件——反射的字符串类名不会参与构建重映射，运行时会找不到类
+    ItemStack itemStack(CloudStoreModels.Item item) {
         ItemStack stack = itemStack(item.itemId);
         if (stack.isEmpty() || !"minecraft:firework_rocket".equals(item.itemId)) return stack;
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\\\"flightDuration\\\"\\s*:\\s*(\\d+)").matcher(safe(item.metaJson));
-        if (!matcher.find()) return stack;
-        try {
-            Class<?> typeClass = Class.forName("net.minecraft.core.component.DataComponentType");
-            Object componentType = Class.forName("net.minecraft.core.component.DataComponents").getField("FIREWORKS").get(null);
-            Object fireworks = Class.forName("net.minecraft.world.item.component.Fireworks")
-                .getConstructor(int.class, List.class).newInstance(Integer.parseInt(matcher.group(1)), List.of());
-            stack.getClass().getMethod("set", typeClass, Object.class).invoke(stack, componentType, fireworks);
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-        }
+        int flight = parseFlightDuration(item);
+        if (flight >= 0) stack.set(DataComponents.FIREWORKS, new Fireworks(flight, List.of()));
         return stack;
+    }
+
+    private int parseFlightDuration(CloudStoreModels.Item item) {
+        for (String json : new String[]{safe(item.metaJson), safe(item.nbtJson)}) {
+            java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\"(?:flightDuration|flight_duration|Flight)\"\\s*:\\s*(\\d+)")
+                .matcher(json);
+            if (matcher.find()) {
+                try {
+                    return Integer.parseInt(matcher.group(1));
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+        return -1;
     }
 
     private String compact(long amount) {
@@ -1089,7 +1302,7 @@ public final class CloudStoreScreen extends Screen {
         return current.getMessage() == null ? "云仓库请求失败" : current.getMessage();
     }
 
-    private record Category(Component label, ItemStack icon, Set<Item> members, boolean all) {
+    private record Category(Component label, ItemStack icon, Set<Item> members, boolean all, boolean favorites) {
     }
 
     private record SearchTerms(String names, String fullId, String shortId, String shortCode, String pinyin, String initials) {
