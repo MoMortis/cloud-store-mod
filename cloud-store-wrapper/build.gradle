@@ -24,6 +24,20 @@ def minecraftDepends = ['>=26.2', '>=26.1 <26.2', '1.21.11']
 
 repositories {
     mavenCentral()
+    maven { url 'https://maven.fabricmc.net' }
+}
+
+dependencies {
+    // 壳入口冲突校验类只依赖 loader / gson / slf4j，运行时均由 loader 或游戏提供
+    compileOnly 'net.fabricmc:fabric-loader:0.19.2'
+    compileOnly 'com.google.code.gson:gson:2.11.0'
+    compileOnly 'org.slf4j:slf4j-api:2.0.16'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    // 字节码 Java 8：壳不依赖 MC 类，三个 MC 分支（Java 21/25）通用
+    options.release = 8
 }
 
 tasks.register('collectSubMods') {
@@ -39,11 +53,42 @@ tasks.register('collectSubMods') {
             if (!jarFile.exists()) {
                 throw new GradleException("Missing sub-mod jar: ${jarFile} (先构建对应版本子工程)")
             }
-            java.nio.file.Files.copy(jarFile.toPath(), new File(dir, jarFile.name).toPath(),
+            def dest = new File(dir, jarFile.name)
+            java.nio.file.Files.copy(jarFile.toPath(), dest.toPath(),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            patchModMenuParent(dest)
             println "Copied: ${jarFile.name}"
         }
     }
+}
+
+// 给内层 jar 的 fabric.mod.json 注入 custom.modmenu.parent 指向壳。
+// Mod Menu 只在子 mod 自声明 parent（或内层为 Loom 生成库）时才做父子缩进展示，
+// JiJ 本身不会自动嵌套（litematica-DSH / printer-EMT 的内层均如此声明）。
+def patchModMenuParent(File jarFile) {
+    def tmp = new File(jarFile.parentFile, jarFile.name + '.tmp')
+    def zin = new java.util.zip.ZipFile(jarFile)
+    def zout = new java.util.zip.ZipOutputStream(new FileOutputStream(tmp))
+    zin.entries().each { entry ->
+        def data = zin.getInputStream(entry).bytes
+        if (entry.name == 'fabric.mod.json') {
+            def meta = new groovy.json.JsonSlurper().parse(data)
+            def custom = (meta.custom instanceof Map) ? meta.custom : [:]
+            def modmenu = (custom.modmenu instanceof Map) ? custom.modmenu : [:]
+            modmenu.parent = 'cloudstore-wrapper'
+            custom.modmenu = modmenu
+            meta.custom = custom
+            data = JsonBuilder.newInstance(meta).toPrettyString().getBytes('UTF-8')
+        }
+        def outEntry = new java.util.zip.ZipEntry(entry.name)
+        zout.putNextEntry(outEntry)
+        zout.write(data)
+        zout.closeEntry()
+    }
+    zout.close()
+    zin.close()
+    java.nio.file.Files.move(tmp.toPath(), jarFile.toPath(),
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING)
 }
 
 processResources {
@@ -75,10 +120,13 @@ jar {
     from(layout.buildDirectory.dir('submods'))
 }
 
-tasks.register('deploy', Copy) {
-    doNotTrackState('The destination is the workspace root deliverable.')
+tasks.register('deploy') {
+    // Gradle 9 严格校验下 Copy 任务输出到工作区根目录会触发隐式依赖报错，改用 doLast 直拷
     dependsOn jar
-    from jar.archiveFile
-    into 'D:/SSS'
-    rename { 'Cloud-Store.jar' }
+    doLast {
+        java.nio.file.Files.copy(jar.archiveFile.get().asFile.toPath(),
+                file('D:/SSS/Cloud-Store.jar').toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        println 'deployed to D:/SSS/Cloud-Store.jar'
+    }
 }

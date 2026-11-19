@@ -87,6 +87,31 @@ public final class CloudStoreApi {
         ), CloudStoreModels.ActionResponse.class);
     }
 
+    // 取出后机器人留在原地继续收存；实测要求顶层 amount（总量）和 items[{item, amount}]
+    public CompletableFuture<CloudStoreModels.ActionResponse> withdrawDeposit(
+        String ownerUuid,
+        List<CloudStoreModels.WithdrawRequest> items,
+        String targetUsername
+    ) {
+        long total = 0;
+        List<java.util.Map<String, Object>> payloadItems = new java.util.ArrayList<>();
+        for (CloudStoreModels.WithdrawRequest request : items) {
+            total += request.amount;
+            java.util.Map<String, Object> entry = new java.util.LinkedHashMap<>();
+            entry.put("item", request.itemKey);
+            entry.put("itemKey", request.itemKey);
+            entry.put("displayName", request.displayName);
+            entry.put("amount", request.amount);
+            payloadItems.add(entry);
+        }
+        return post("/api/action/withdraw-deposit", java.util.Map.of(
+            "ownerUuid", ownerUuid,
+            "amount", total,
+            "items", payloadItems,
+            "targetUsername", targetUsername
+        ), CloudStoreModels.ActionResponse.class);
+    }
+
     private <T> CompletableFuture<T> get(String path, Class<T> type) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri(path))
             .timeout(Duration.ofSeconds(12))

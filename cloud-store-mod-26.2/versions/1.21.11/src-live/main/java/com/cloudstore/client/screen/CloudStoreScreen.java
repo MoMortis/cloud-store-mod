@@ -87,6 +87,7 @@ public final class CloudStoreScreen extends Screen {
     private ButtonWidget depositButton;
     private ButtonWidget refreshButton;
     private ButtonWidget submitButton;
+    private ButtonWidget withdrawDepositButton;
     private ButtonWidget clearButton;
 
     public CloudStoreScreen(Screen parent) {
@@ -136,7 +137,7 @@ public final class CloudStoreScreen extends Screen {
         int bottomY = this.height - 27;
         int actionWidth = this.width < 430 ? 78 : 96;
         int targetY = twoRowBottom ? bottomY - 26 : bottomY;
-        int targetWidth = twoRowBottom ? this.width - 20 : Math.min(150, Math.max(86, this.width - actionWidth - 170));
+        int targetWidth = twoRowBottom ? this.width - 20 : Math.min(150, Math.max(86, this.width - actionWidth - 224));
         targetField = new TextFieldWidget(this.textRenderer, 10, targetY, targetWidth, 20, Text.literal("领取玩家"));
         targetField.setPlaceholder(Text.literal("留空=自己；可填代取 ID"));
         targetField.setMaxLength(16);
@@ -152,10 +153,14 @@ public final class CloudStoreScreen extends Screen {
         int settingsX = closeX - 52;
         int compactActionWidth = twoRowBottom ? 66 : actionWidth;
         int submitX = settingsX - compactActionWidth - 6;
-        int clearX = twoRowBottom ? submitX - 48 - 6 : submitX - 48 - 6;
+        int wdX = submitX - 48 - 6;
+        int clearX = wdX - 48 - 6;
         clearButton = ButtonWidget.builder(Text.literal("清空"), button -> clearSelection())
             .dimensions(clearX, bottomY, 48, 20).build();
         this.addDrawableChild(clearButton);
+        withdrawDepositButton = ButtonWidget.builder(Text.literal("存取"), button -> submitWithdrawDeposit())
+            .dimensions(wdX, bottomY, 48, 20).build();
+        this.addDrawableChild(withdrawDepositButton);
         submitButton = ButtonWidget.builder(Text.literal("提交取货"), button -> submitWithdraw())
             .dimensions(submitX, bottomY, compactActionWidth, 20).build();
         this.addDrawableChild(submitButton);
@@ -736,14 +741,19 @@ public final class CloudStoreScreen extends Screen {
         }
     }
 
-    private void submitWithdraw() {
-        if (submitting || selected.isEmpty() || me == null || me.user == null) return;
+    // 领取玩家不合法时返回 null 并写好提示
+    private String resolveWithdrawTarget() {
+        if (me == null || me.user == null) return null;
         String target = targetField.getText().trim();
         if (target.isEmpty()) target = me.user.username;
         if (!target.matches("[A-Za-z0-9_]{3,16}")) {
             status = "领取玩家 ID 必须是 3-16 位字母、数字或下划线";
-            return;
+            return null;
         }
+        return target;
+    }
+
+    private List<CloudStoreModels.WithdrawRequest> buildWithdrawRequests() {
         Map<String, CloudStoreModels.Item> byKey = new HashMap<>();
         for (CloudStoreModels.Item item : items) byKey.put(item.itemKey, item);
         List<CloudStoreModels.WithdrawRequest> requests = new ArrayList<>();
@@ -762,27 +772,55 @@ public final class CloudStoreScreen extends Screen {
                 if (remainder > 0) requests.add(new CloudStoreModels.WithdrawRequest(entry.getKey(), contentName, remainder));
             }
         }
+        return requests;
+    }
+
+    private void finishWithdrawSubmit(CloudStoreModels.ActionResponse response, Throwable error) {
+        submitting = false;
+        if (error != null) status = message(error);
+        else {
+            selected.clear();
+            selectedSources.clear();
+            status = response.message;
+            CloudStoreClient.showStatus(response.message);
+            // 取货后强制刷新，别被在飞的刷新挡掉
+            loadInventoryOnly(false, true);
+        }
+        updateButtons();
+    }
+
+    private void submitWithdraw() {
+        if (submitting || selected.isEmpty() || me == null || me.user == null) return;
+        String target = resolveWithdrawTarget();
+        if (target == null) return;
+        List<CloudStoreModels.WithdrawRequest> requests = buildWithdrawRequests();
         if (requests.isEmpty()) return;
         submitting = true;
         status = "正在提交 " + requests.size() + " 种物品...";
         updateButtons();
         CloudStoreClient.api.withdrawMany(ownerUuid, requests, target).whenComplete((response, error) -> MinecraftClient.getInstance().execute(() -> {
-            submitting = false;
-            if (error != null) status = message(error);
-            else {
-                selected.clear();
-                selectedSources.clear();
-                status = response.message;
-                CloudStoreClient.showStatus(response.message);
-                // 取货后强制刷新，别被在飞的刷新挡掉
-                loadInventoryOnly(false, true);
-            }
-            updateButtons();
+            finishWithdrawSubmit(response, error);
+        }));
+    }
+
+    // 存取：取出后机器人留在原地继续收存
+    private void submitWithdrawDeposit() {
+        if (submitting || selected.isEmpty() || me == null || me.user == null) return;
+        String target = resolveWithdrawTarget();
+        if (target == null) return;
+        List<CloudStoreModels.WithdrawRequest> requests = buildWithdrawRequests();
+        if (requests.isEmpty()) return;
+        submitting = true;
+        status = "正在提交存取 " + requests.size() + " 种物品...";
+        updateButtons();
+        CloudStoreClient.api.withdrawDeposit(ownerUuid, requests, target).whenComplete((response, error) -> MinecraftClient.getInstance().execute(() -> {
+            finishWithdrawSubmit(response, error);
         }));
     }
 
     private void clearSelection() {
         selected.clear();
+        selectedSources.clear(); // 不同步清掉会导致重进子界面时旧数量被恢复
         updateButtons();
     }
 
@@ -804,6 +842,7 @@ public final class CloudStoreScreen extends Screen {
             submitButton.setMessage(Text.literal(submitting ? "提交中..." : "提交取货"));
         }
         if (clearButton != null) clearButton.active = !selected.isEmpty() && !submitting;
+        if (withdrawDepositButton != null) withdrawDepositButton.active = !selected.isEmpty() && !submitting;
     }
 
     private List<CloudStoreModels.Item> visibleItems() {
@@ -909,7 +948,9 @@ public final class CloudStoreScreen extends Screen {
             int x = x0 + (i % columns) * TILE_STEP;
             int y = gridY + (i / columns) * TILE_STEP + rowOffset;
             if (y + TILE_SIZE <= gridY || y >= gridBottom) continue;
-            boolean hovered = mouseX >= x && mouseX < x + TILE_SIZE && mouseY >= y && mouseY < y + TILE_SIZE;
+            // 悬停判定夹到可视区内，被 scissor 裁掉的部分不响应（与点击判定范围一致）
+            boolean hovered = mouseX >= x && mouseX < x + TILE_SIZE
+                && mouseY >= Math.max(y, gridY) && mouseY < Math.min(y + TILE_SIZE, gridBottom);
             long selectedAmount = selected.getOrDefault(item.itemKey, 0L);
             int background = selectedAmount > 0 ? 0xFF315C49 : hovered ? 0xFF354252 : 0xFF242A33;
             context.fill(x, y, x + TILE_SIZE, y + TILE_SIZE, background);

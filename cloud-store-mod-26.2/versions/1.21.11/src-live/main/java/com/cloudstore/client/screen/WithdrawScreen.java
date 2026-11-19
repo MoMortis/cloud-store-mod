@@ -28,6 +28,7 @@ public final class WithdrawScreen extends Screen {
     private long looseSelected;
     private ButtonWidget favoriteButton;
     private ButtonWidget allButton;
+    private ButtonWidget removeButton;
     private boolean favorite;
     private String status = "";
     private int titleY;
@@ -51,8 +52,9 @@ public final class WithdrawScreen extends Screen {
         int actionY = titleY + 70;
         this.addDrawableChild(ButtonWidget.builder(Text.literal("加入取货清单"), button -> addToCart())
             .dimensions(center - 152, actionY, 96, 20).build());
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("移除"), button -> removeFromCart())
-            .dimensions(center - 51, actionY, 46, 20).build()).active = totalSelected() > 0;
+        removeButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("移除"), button -> removeFromCart())
+            .dimensions(center - 51, actionY, 46, 20).build());
+        removeButton.active = totalSelected() > 0;
         allButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("全部"), button -> selectAll())
             .dimensions(center, actionY, 44, 20).build());
         favoriteButton = ButtonWidget.builder(Text.literal(""), button -> toggleFavorite())
@@ -93,7 +95,8 @@ public final class WithdrawScreen extends Screen {
                     continue;
                 }
                 for (int i = 0; i < newGroups.size(); i++) {
-                    if (newGroups.get(i).itemId().equals(source.sourceKey())) {
+                    // 盒子选中项的 sourceKey 存的是盒子行的 itemKey（variantKey），必须按 sourceKey 匹配
+                    if (newGroups.get(i).sourceKey().equals(source.sourceKey())) {
                         long perBox = Math.max(1, newGroups.get(i).perBoxAmount());
                         newSelected[i] = clampGroup(newGroups.get(i), source.amount() / perBox); // 物品数 → 盒数
                         break;
@@ -104,7 +107,7 @@ public final class WithdrawScreen extends Screen {
             looseSelected = clampLoose(looseSelected);
             for (int i = 0; i < newGroups.size(); i++) {
                 for (int j = 0; j < oldGroups.size(); j++) {
-                    if (oldGroups.get(j).itemId().equals(newGroups.get(i).itemId())) {
+                    if (oldGroups.get(j).sourceKey().equals(newGroups.get(i).sourceKey())) {
                         newSelected[i] = clampGroup(newGroups.get(i), oldSelected[j]);
                         break;
                     }
@@ -152,6 +155,7 @@ public final class WithdrawScreen extends Screen {
 
     private void refreshAmountField() {
         status = "";
+        if (removeButton != null) removeButton.active = totalSelected() > 0;
     }
 
     private void selectAll() {
@@ -271,6 +275,8 @@ public final class WithdrawScreen extends Screen {
 
     private Integer tileIndexAt(double mouseX, double mouseY) {
         int tileY = detailTileTop();
+        // 屏幕过矮放不下一行格子时明细区不绘制（renderStorageDetails 提前返回），命中判定同步拒绝
+        if (this.height - 24 - tileY < TILE_SIZE) return null;
         if (mouseY < tileY) return null;
         int perRow = tilesPerRow();
         int visibleRows = maxDetailRows();
@@ -353,6 +359,8 @@ public final class WithdrawScreen extends Screen {
         // 平滑滚动动画：动画值逐帧逼近目标行
         detailScrollAnim += (detailScroll - detailScrollAnim) * Math.min(1.0f, Math.max(0.0f, delta) * 0.45f);
         if (Math.abs(detailScroll - detailScrollAnim) < 0.002f) detailScrollAnim = detailScroll;
+        if (detailScrollAnim < 0) detailScrollAnim = 0; // 与主界面一致：maxScroll 骤减时防止动画值越界导致整格空白
+        if (detailScrollAnim > maxScroll) detailScrollAnim = maxScroll;
         int animBaseRow = (int) Math.floor(detailScrollAnim);
         float animFrac = detailScrollAnim - animBaseRow;
         int rowOffset = Math.round(-animFrac * TILE_STEP);
@@ -367,7 +375,8 @@ public final class WithdrawScreen extends Screen {
             int col = t % perRow;
             int rowCount = Math.min(perRow, tileCount - row * perRow);
             int x = rowStartX(rowCount) + col * TILE_STEP;
-            int y = tileY + row * TILE_STEP + rowOffset;
+            // 行号要转成可视区行（减去已滚过的整行数），否则滚动结束后整个网格下移、底部行被整行跳过
+            int y = tileY + (row - animBaseRow) * TILE_STEP + rowOffset;
             if (y + TILE_SIZE <= tileY || y >= gridBottom) continue;
             if (t == 0) {
                 // 散货格子恒显示（没有散货时数量显示 0）；图标带变体数据（如烟花等级）
@@ -430,7 +439,11 @@ public final class WithdrawScreen extends Screen {
 
     private Text drawDetailTile(DrawContext context, ItemStack stack, String countText, String selectedText,
                                 boolean selected, String tooltip, int x, int y, int mouseX, int mouseY) {
-        boolean hovered = mouseX >= x && mouseX < x + TILE_SIZE && mouseY >= y && mouseY < y + TILE_SIZE;
+        // 悬停判定夹到可视区内，被 scissor 裁掉的部分不响应（与点击判定范围一致）
+        int visTop = detailTileTop();
+        int visBottom = visTop + maxDetailRows() * TILE_STEP;
+        boolean hovered = mouseX >= x && mouseX < x + TILE_SIZE
+            && mouseY >= Math.max(y, visTop) && mouseY < Math.min(y + TILE_SIZE, visBottom);
         context.fill(x, y, x + TILE_SIZE, y + TILE_SIZE, hovered ? 0xFF354252 : 0xFF242A33);
         if (selected) {
             context.fill(x, y, x + TILE_SIZE, y + 2, 0xFF69D69A);

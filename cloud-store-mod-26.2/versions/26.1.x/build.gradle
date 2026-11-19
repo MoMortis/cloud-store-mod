@@ -18,7 +18,7 @@ dependencies {
     compileOnly files('D:/PCL2/.minecraft/libraries/net/fabricmc/fabric-loader/0.19.3/fabric-loader-0.19.3.jar')
     compileOnly files("${root}/mods/fabric-api-0.155.2+26.1.2.jar")
     compileOnly fileTree('local-libs') { include '*.jar' }
-    compileOnly fileTree("${root}/mods") { include '*litematica-fabric-26.1.2-0.27.10.jar' }
+    compileOnly files('D:/SSS/litematica-DSH/versions/26.1.2/build/libs/26.1.2-0.27.10+261025.jar')
     compileOnly fileTree("${root}/mods") { include 'malilib-fabric-26.1.2-0.28.9.jar' }
     compileOnly fileTree('D:/PCL2/.minecraft/libraries') {
         include '**/*.jar'

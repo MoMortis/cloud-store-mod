@@ -49,13 +49,17 @@ dependencies {
     minecraft "com.mojang:minecraft:${minecraft_version}"
     mappings "net.fabricmc:yarn:${yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${loader_version}"
-    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-api-4b5d3c0a-0.141.4+1.21.11.jar')
-    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-lifecycle-events-v1-4b5d3c0a-2.6.15+4ebb5c083e.jar')
-    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-key-binding-api-v1-4b5d3c0a-1.1.7+4fc5413f3e.jar')
-    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-api-base-4b5d3c0a-1.0.5+4ebb5c083e.jar')
-    compileOnly files('D:/SSS/BetterBundleHUDMod-main/build/loom-cache/remapped_working/remapped.net.fabricmc.fabric-api-fabric-networking-api-v1-4b5d3c0a-5.1.6+6b6d71a53e.jar')
+    // BetterBundleHUDMod-main 目录已删除；改用 BetterBundleHUD 工程loom 缓存里已重映射到 Yarn 的
+    // fabric-api 模块 jar（版本与原引用一致：base 1.0.5 / lifecycle 2.6.15 / key-binding 1.1.7 / networking 5.1.6）
+    compileOnly fileTree('D:/SSS/BetterBundleHUD/.gradle/loom-cache/remapped_mods/remapped/net/fabricmc/fabric-api') {
+        include '**/fabric-api-base-4b5d3c0a-*.jar', '**/fabric-lifecycle-events-v1-4b5d3c0a-*.jar',
+                '**/fabric-key-binding-api-v1-4b5d3c0a-*.jar', '**/fabric-networking-api-v1-4b5d3c0a-*.jar'
+        exclude '**/*sources*'
+    }
     // 投影模组改用自制分支 litematica-DSH（1.21.11 版）；modCompileOnly 让 loom 把它的中间名映射重映射为本工程的 Yarn 命名
-    modCompileOnly files('D:/SSS/litematica-DSH/litematica-DSH.jar')
+    // 注意：D:/SSS/litematica-DSH/litematica-DSH.jar 已改成多版本壳包（类都在 META-INF/jars 里），
+    // Loom 编译期拿不到类，必须引用 versions/1.21.11 的直接产物
+    modCompileOnly files('D:/SSS/litematica-DSH/versions/1.21.11/build/libs/1.21.11-0.26.12+261112.jar')
     compileOnly files('D:/SSS/Cloud-Store/cloud-store-mod-26.2/versions/1.21.11/.gradle/loom-cache/remapped_mods/remapped/unspecified/malilib-fabric-1.21.11-0.27.16-4b5d3c0a/49d6d9ca27/malilib-fabric-1.21.11-0.27.16-4b5d3c0a-49d6d9ca27.jar')
     implementation files('C:/Users/Tlipoca/.gradle/caches/modules-2/files-2.1/com.belerweb/pinyin4j/2.5.1/ea23babfc45a078af5b73cd9f3401caad1f1b2a9/pinyin4j-2.5.1.jar')
 }
